@@ -1,0 +1,7 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Expo XDL schema stub",
+  "description": "A minimal local stub for the expo xdl schema to avoid remote fetch in offline/editor environments.",
+  "type": "object",
+  "additionalProperties": true
+}
