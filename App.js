@@ -35,7 +35,13 @@ export default function App() {
               name="Login"
               options={{ headerShown: false }}
             >
-              {props => <LoginPage {...props} onLoginSuccess={handleLoginSuccess} />}
+              {props => (
+                <LoginPage
+                  {...props}
+                  onLoginSuccess={handleLoginSuccess}
+                  onNavigateToSignin={() => props.navigation.navigate('Signin')}
+                />
+              )}
             </Stack.Screen>
             <Stack.Screen
               name="Signin"
