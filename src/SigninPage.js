@@ -31,7 +31,7 @@ const BRANCHES = [
 // Get all stops in alphabetical order
 const PICKUP_POINTS = getAllStops();
 
-const SigninPage = ({ onNavigateToLogin }) => {
+const SigninPage = ({ onNavigateToLogin, navigation }) => {
   const [name, setName] = useState('');
   const [usn, setUsn] = useState('');
   const [branch, setBranch] = useState('');
@@ -43,6 +43,7 @@ const SigninPage = ({ onNavigateToLogin }) => {
   useEffect(() => {
     if (pickupPoint) {
       const details = findBusDetailsByStop(pickupPoint);
+      console.log('Found route details:', details);
       setRouteDetails(details);
     }
   }, [pickupPoint]);
@@ -59,45 +60,208 @@ const SigninPage = ({ onNavigateToLogin }) => {
   const [showModal, setShowModal] = useState(false);
   const [createdUser, setCreatedUser] = useState(null);
 
-  const handleSignin = async () => {
+  const validateInputs = () => {
+    // Clear any previous error
     setError('');
-    if (!name || !usn || !branch || !pickupPoint || !phone || !password || !confirmPassword) {
-      setError('Please fill all the fields.');
-      return;
+    console.log('Starting input validation...');
+
+    // Check all required fields
+    const requiredFields = {
+      'Name': name,
+      'USN': usn,
+      'Year': year,
+      'Branch': branch,
+      'Pickup Point': pickupPoint,
+      'Phone Number': phone,
+      'Password': password,
+      'Confirm Password': confirmPassword
+    };
+
+    const missingFields = Object.entries(requiredFields)
+      .filter(([_, value]) => !value)
+      .map(([field]) => field);
+
+    if (missingFields.length > 0) {
+      setError(`Please fill in the following fields: ${missingFields.join(', ')}`);
+      return false;
     }
+
+    // Validate USN format (assuming format like "4SF20CS001")
+    const usnPattern = /^\d[A-Z]{2}\d{2}[A-Z]{2}\d{3}$/;
+    if (!usnPattern.test(usn.toUpperCase())) {
+      setError('Please enter a valid USN (e.g., 4CB2XCSXXX)');
+      return false;
+    }
+
+    // Validate year
+    if (!year || typeof year !== 'number' || year < 1 || year > 4) {
+      setError('Please select a valid year (1-4)');
+      return false;
+    }
+
+    // Validate phone number (10 digits)
+    const phonePattern = /^\d{10}$/;
+    if (!phonePattern.test(phone)) {
+      setError('Please enter a valid 10-digit phone number');
+      return false;
+    }
+
+    // Validate password
     if (password !== confirmPassword) {
       setError('Passwords do not match.');
-      return;
+      return false;
     }
     if (password.length < 6) {
       setError('Password must be at least 6 characters long.');
-      return;
+      return false;
     }
 
+    // Validate route details
     if (!routeDetails) {
+      console.log('❌ No route details found');
       setError('Could not determine bus route for selected pickup point.');
+      return false;
+    }
+
+    if (!routeDetails.routeName || !routeDetails.busNumber) {
+      console.log('❌ Incomplete route details:', routeDetails);
+      setError('Invalid route information. Please select a valid pickup point.');
+      return false;
+    }
+
+    console.log('✅ All validations passed');
+    return true;
+  };
+
+  const handleSignin = async () => {
+    setError('');
+    
+    if (!validateInputs()) {
       return;
     }
 
     setLoading(true);
     try {
-      const res = await authAPI.signup({ 
-        name, 
-        usn, 
-        year, 
-        branch, 
-        pickupPoint, 
-        phone, 
-        password,
-        routeName: routeDetails.routeName,
-        busNumber: routeDetails.busNumber
+      // Re-fetch route details to ensure they're current
+      const currentRouteDetails = findBusDetailsByStop(pickupPoint);
+      if (!currentRouteDetails || !currentRouteDetails.routeName || !currentRouteDetails.busNumber) {
+        console.error('Missing route details:', { pickupPoint, currentRouteDetails });
+        throw new Error('Could not determine bus route details for the selected pickup point');
+      }
+
+      console.log('Route details before signup:', currentRouteDetails);
+
+      // Format data exactly as the Mongoose model expects it
+      const signupData = {
+        name: name.trim(),
+        usn: usn.toUpperCase().trim(),
+        year: parseInt(year, 10),  // Ensure it's a number
+        branch: branch.trim(),
+        pickupPoint: pickupPoint.trim(),
+        phone: phone.replace(/\D/g, '').trim(), // Remove any non-digits
+        password: password,
+        routeName: currentRouteDetails.routeName,  // Use direct value without trim()
+        busNumber: currentRouteDetails.busNumber,  // Use direct value without trim()
+        role: 'student'
+      };
+
+      // Validate all required fields are present and properly formatted
+      const missingFields = [];
+      Object.entries(signupData).forEach(([key, value]) => {
+        if (key !== 'role' && (!value || String(value).trim() === '')) {
+          missingFields.push(key);
+        }
       });
-      // show confirmation modal with returned user details
-      setCreatedUser({ ...res.user, routeDetails });
-      setShowModal(true);
+
+      if (missingFields.length > 0) {
+        throw new Error(`Missing or invalid fields: ${missingFields.join(', ')}`);
+      }
+
+      // Validate specific field formats
+      if (!Number.isInteger(signupData.year) || signupData.year < 1 || signupData.year > 4) {
+        throw new Error('Year must be a number between 1 and 4');
+      }
+
+      if (signupData.phone.length !== 10) {
+        throw new Error('Phone number must be exactly 10 digits');
+      }
+
+      if (!signupData.routeName || !signupData.busNumber) {
+        throw new Error('Route information is missing. Please select a valid pickup point');
+      }
+
+      // Final validation of route information
+      console.log('Validating route information...', {
+        routeName: signupData.routeName,
+        busNumber: signupData.busNumber
+      });
+      
+      if (!signupData.routeName || !signupData.busNumber) {
+        console.error('❌ Missing route information:', {
+          routeName: signupData.routeName,
+          busNumber: signupData.busNumber
+        });
+        throw new Error('Route information is missing. Please select a valid pickup point.');
+      }
+
+      console.log('✅ Submitting signup data:', { 
+        ...signupData, 
+        password: '[REDACTED]',
+        routeInfo: {
+          routeName: signupData.routeName,
+          busNumber: signupData.busNumber
+        }
+      });
+      
+      const res = await authAPI.signup(signupData);
+      
+      if (res.user) {
+        // show confirmation modal with returned user details
+        setCreatedUser({ ...res.user, routeDetails });
+        setShowModal(true);
+      } else {
+        throw new Error('Invalid response from server');
+      }
     } catch (err) {
-      // err is expected to be an Error thrown by api client — show a friendly message only
-      setError(err?.message || String(err));
+      console.error('❌ Signup error:', err);
+      
+      // Handle client-side validation errors
+      if (!err.response) {
+        console.error('Client-side error:', err.message);
+        setError(err.message || 'Validation error occurred');
+        return;
+      }
+      
+      // Handle server response errors
+      const serverData = err.response?.data;
+
+      // If server sent an 'error' string, show it directly
+      if (serverData?.error) {
+        console.error('Server validation error:', serverData.error);
+        setError(serverData.error);
+        return;
+      }
+
+      // Handle structured server error payloads
+      if (serverData) {
+        if (serverData.code === 11000 || serverData.error?.includes?.('already registered')) {
+          setError('This USN is already registered. Please use a different USN or contact support.');
+        } else if (serverData.error?.includes?.('validation failed')) {
+          setError('Please check all fields and try again.');
+          console.error('Validation errors:', serverData.errors || serverData.details || serverData.validationErrors);
+        } else if (serverData.missingFields) {
+          const fields = serverData.missingFields.join(', ');
+          setError(`Missing required fields: ${fields}`);
+        } else if (serverData.details && Array.isArray(serverData.details)) {
+          // Server returned structured details array
+          setError(serverData.details.map(d => `${d.field}: ${d.message}`).join('; '));
+        } else {
+          setError(serverData.error || 'Server validation failed');
+        }
+      } else {
+        setError('An unexpected error occurred. Please try again later.');
+        console.error('Detailed error:', err);
+      }
     } finally {
       setLoading(false);
     }
@@ -106,10 +270,17 @@ const SigninPage = ({ onNavigateToLogin }) => {
   return (
     <LinearGradient colors={['#c7d2fe', '#e9d5ff', '#fbcfe8']} style={styles.container}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.keyboardView}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 40 : 0}
       >
-        <View style={styles.card}>
+        <ScrollView 
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          bounces={true}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.card}>
           {/* 🏫 Canara College Logo */}
           <Image
             source={require('../assets/canara-logo.png')}
@@ -279,7 +450,14 @@ const SigninPage = ({ onNavigateToLogin }) => {
                     <Text style={styles.detailLine}><Text style={styles.detailLabel}>Phone:</Text> {createdUser.phone}</Text>
                   </View>
                 ) : null}
-                <TouchableOpacity style={[styles.button, { marginTop: 12 }]} onPress={() => { setShowModal(false); onNavigateToLogin(); }}>
+                <TouchableOpacity
+                  style={[styles.button, { marginTop: 12 }]}
+                  onPress={() => {
+                    setShowModal(false);
+                    const go = onNavigateToLogin || (() => navigation?.navigate?.('Login'));
+                    try { go(); } catch (e) { console.error('Navigation to login failed', e); }
+                  }}
+                >
                   <Text style={styles.buttonText}>Go to Login</Text>
                 </TouchableOpacity>
               </View>
@@ -308,18 +486,34 @@ const SigninPage = ({ onNavigateToLogin }) => {
           {/* Login Link */}
           <Text style={styles.loginText}>
             Already have an account?{' '}
-            <Text style={styles.loginLink} onPress={onNavigateToLogin}>
+            <Text style={styles.loginLink} onPress={() => {
+              const go = onNavigateToLogin || (() => navigation?.navigate?.('Login'));
+              try { go(); } catch (e) { console.error('Navigation to login failed', e); }
+            }}>
               Sign In
             </Text>
           </Text>
         </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { 
+    flex: 1 
+  },
+  keyboardView: {
+    flex: 1,
+    width: '100%'
+  },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 40
+  },
   card: {
     backgroundColor: 'rgba(255,255,255,0.85)',
     borderRadius: 24,

@@ -12,7 +12,10 @@ import {
   Easing,
   Platform,
   Linking,
+  Dimensions,
 } from 'react-native';
+import * as Location from 'expo-location';
+import MapView, { Marker } from 'react-native-maps';
 import { apiClient } from './services/api';
 import { busDetails } from './config/busDetails';
 
@@ -46,6 +49,9 @@ export default function Dashboard({ navigation, user, onLogout }) {
   const [message, setMessage] = useState('');
   const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [location, setLocation] = useState(null);
+  const [isTracking, setIsTracking] = useState(false);
+  const [trackingInterval, setTrackingInterval] = useState(null);
 
   // Debug log
   useEffect(() => {
@@ -54,6 +60,60 @@ export default function Dashboard({ navigation, user, onLogout }) {
     console.log('Current Bus Number:', user?.busNumber);
     console.log('Bus Info:', user?.busNumber ? busDetails[user.busNumber] : 'No bus number');
   }, [user]);
+
+  // Location tracking setup
+  const startTracking = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Location permission is required for tracking.');
+        return;
+      }
+
+      // Start tracking interval
+      const id = setInterval(async () => {
+        const { coords } = await Location.getCurrentPositionAsync({});
+        setLocation(coords);
+
+        // Send location to backend
+        try {
+          await apiClient.post('/api/locations/new_location_add', {
+            vehicleId: user.busNumber, // Using busNumber as vehicleId
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            timestamp: new Date().toISOString(),
+          });
+          console.log('Location sent to backend');
+        } catch (err) {
+          console.error('Error sending location:', err);
+        }
+      }, 10000);
+
+      setTrackingInterval(id);
+      setIsTracking(true);
+    } catch (error) {
+      console.error('Error starting tracking:', error);
+      Alert.alert('Error', 'Failed to start location tracking');
+    }
+  };
+
+  const stopTracking = () => {
+    if (trackingInterval) {
+      clearInterval(trackingInterval);
+      setTrackingInterval(null);
+      setIsTracking(false);
+      console.log('Location tracking stopped');
+    }
+  };
+
+  // Cleanup tracking on unmount
+  useEffect(() => {
+    return () => {
+      if (trackingInterval) {
+        clearInterval(trackingInterval);
+      }
+    };
+  }, [trackingInterval]);
   // Animation refs
   const enterAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(0)).current;
@@ -100,10 +160,16 @@ export default function Dashboard({ navigation, user, onLogout }) {
 
   const handleTrackBus = async () => {
     try {
-      setLoading(true);
-      
       if (!user?.busNumber) {
         throw new Error('No bus assigned');
+      }
+
+      if (isTracking) {
+        stopTracking();
+        setTrack(false);
+      } else {
+        await startTracking();
+        setTrack(true);
       }
 
       const locationData = await locationAPI.getBusLocation(user.busNumber);
@@ -253,8 +319,14 @@ export default function Dashboard({ navigation, user, onLogout }) {
         </View>
 
         <View style={{ flexDirection: 'row' }}>
-          <TouchableOpacity style={[styles.button, { marginRight: 8 }]} onPress={handleTrackBus}>
-            <Text style={styles.buttonText}>Refresh Tracking</Text>
+          <TouchableOpacity 
+            style={[styles.button, { marginRight: 8 }]} 
+            onPress={() => navigation.navigate('Map', { 
+              busNumber: user.busNumber,
+              username: user.username 
+            })}
+          >
+            <Text style={styles.buttonText}>Track Bus Location</Text>
           </TouchableOpacity>
           <TouchableOpacity 
             style={[styles.button, styles.altButton]} 
@@ -265,12 +337,48 @@ export default function Dashboard({ navigation, user, onLogout }) {
         </View>
 
         <View style={{ marginTop: 8 }}>
-          {track?.latitude ? (
-            <Text style={styles.field}><Text style={styles.label}>Status: </Text>{track.status || '—'}{"\n"}
-              <Text style={styles.label}>Lat:</Text> {track.latitude}, <Text style={styles.label}>Long:</Text> {track.longitude}
-            </Text>
+          {track && location ? (
+            <>
+              <View style={styles.mapContainer}>
+                <MapView
+                  style={styles.map}
+                  initialRegion={{
+                    latitude: location.latitude,
+                    longitude: location.longitude,
+                    latitudeDelta: 0.005,
+                    longitudeDelta: 0.005,
+                  }}
+                  region={{
+                    latitude: location.latitude,
+                    longitude: location.longitude,
+                    latitudeDelta: 0.005,
+                    longitudeDelta: 0.005,
+                  }}
+                >
+                  <Marker
+                    coordinate={{
+                      latitude: location.latitude,
+                      longitude: location.longitude,
+                    }}
+                    title={`Bus ${user.busNumber}`}
+                    description="Current Location"
+                  >
+                    <View style={styles.busMarker}>
+                      <Text style={styles.busEmoji}>🚍</Text>
+                    </View>
+                  </Marker>
+                </MapView>
+              </View>
+              <Text style={styles.field}>
+                <Text style={styles.label}>Status: </Text>Live Tracking{"\n"}
+                <Text style={styles.label}>Lat: </Text>{location.latitude.toFixed(6)}{"\n"}
+                <Text style={styles.label}>Long: </Text>{location.longitude.toFixed(6)}
+              </Text>
+            </>
           ) : (
-            <Text style={styles.muted}>No live tracking data. Press "Refresh Tracking" to try.</Text>
+            <Text style={styles.muted}>
+              {isTracking ? 'Getting location...' : 'Press "Track" to start live tracking'}
+            </Text>
           )}
         </View>
 
@@ -350,6 +458,18 @@ function animatedCard(enterAnim, delay) {
 }
 
 const styles = StyleSheet.create({
+  mapContainer: {
+    height: 300,
+    marginVertical: 10,
+    borderRadius: 8,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  map: {
+    width: '100%',
+    height: '100%',
+  },
   container: {
     alignItems: 'center',
     padding: 20,

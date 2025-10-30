@@ -9,6 +9,7 @@ import Dashboard from './src/Dashboard.js';
 import BusDetailsScreen from './src/BusDetailsScreen.js';
 import ContactScreen from './src/ContactScreen.js';
 import MapScreen from './src/MapScreen.js';
+import TrackerScreen from './src/screens/TrackerScreen.js';
 
 const Stack = createStackNavigator();
 
@@ -57,6 +58,11 @@ export default function App() {
             >
               {props => <Dashboard {...props} user={loggedInUser} onLogout={handleLogout} />}
             </Stack.Screen>
+            <Stack.Screen
+              name="Tracker"
+              component={TrackerScreen}
+              options={{ headerTitle: 'Live Bus Tracking' }}
+            />
             <Stack.Screen
               name="Map"
               component={MapScreen}

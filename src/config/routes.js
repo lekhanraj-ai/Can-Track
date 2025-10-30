@@ -67,14 +67,23 @@ export const getAllStops = () => {
 
 // Helper function to find bus route by stop
 export const findBusDetailsByStop = (stop) => {
-  for (const [routeName, routeInfo] of Object.entries(busRoutes)) {
+  if (!stop) {
+    console.log('No stop provided');
+    return null;
+  }
+
+  for (const [routeId, routeInfo] of Object.entries(busRoutes)) {
     if (routeInfo.stops.includes(stop)) {
-      return {
-        routeName,
+      // Ensure routeName is exactly as it appears in the object key
+      const details = {
+        routeName: routeId,  // Use the exact route name from the object key
         busNumber: routeInfo.busNumber,
         stops: routeInfo.stops
       };
+      console.log('Found route details for stop:', stop, details);
+      return details;
     }
   }
+  console.log('No route found for stop:', stop);
   return null;
 };

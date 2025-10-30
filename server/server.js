@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import os from 'os';
 import authRoutes from "./routes/auth.js";
 import busLocationRoutes from "./routes/busLocation.js";
+import friendLocationRoutes from "./routes/friendLocation.js";
 
 dotenv.config();
 
@@ -29,6 +30,7 @@ app.get("/api/health", (req, res) => {
 // Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/location", busLocationRoutes);
+app.use("/api/friend", friendLocationRoutes);
 
 // ✅ MongoDB Connection
 const mongoURI =

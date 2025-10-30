@@ -9,7 +9,11 @@ router.post('/signup', async (req, res) => {
   try {
     console.log('📝 Signup Request Body:', { ...req.body, password: '[REDACTED]' });
     
-    const { 
+    // Log the raw request body for debugging
+    console.log('Raw request body type:', typeof req.body);
+    console.log('Raw request body keys:', Object.keys(req.body));
+    
+    let { 
       name, 
       usn, 
       year, 
@@ -21,24 +25,92 @@ router.post('/signup', async (req, res) => {
       busNumber 
     } = req.body;
 
-    // Detailed validation
-    const missingFields = [];
-    if (!name) missingFields.push('name');
-    if (!usn) missingFields.push('usn');
-    if (!year) missingFields.push('year');
-    if (!branch) missingFields.push('branch');
-    if (!pickupPoint) missingFields.push('pickupPoint');
-    if (!phone) missingFields.push('phone');
-    if (!password) missingFields.push('password');
-    if (!routeName) missingFields.push('routeName');
-    if (!busNumber) missingFields.push('busNumber');
+    // Coerce types where reasonable (clients sometimes send strings)
+    year = year !== undefined ? Number(year) : year;
+    phone = phone ? String(phone) : phone;
+    
+    // Log individual fields for debugging
+    console.log('Parsed fields:', {
+      name: typeof name,
+      usn: typeof usn,
+      year: typeof year + ' - ' + year,
+      branch: typeof branch,
+      pickupPoint: typeof pickupPoint,
+      phone: typeof phone,
+      routeName: typeof routeName,
+      busNumber: typeof busNumber
+    });
+      console.log('🔍 Route information received:', {
+        routeName: routeName || 'MISSING',
+        busNumber: busNumber || 'MISSING',
+        pickupPoint: pickupPoint || 'MISSING'
+      });
+
+      // Enhanced validation with type checking
+      const missingFields = [];
+      const validationErrors = [];
+
+      // Basic field presence validation
+      if (!name?.trim()) missingFields.push('name');
+      if (!usn?.trim()) missingFields.push('usn');
+      if (!year) missingFields.push('year');
+      if (!branch?.trim()) missingFields.push('branch');
+      if (!pickupPoint?.trim()) missingFields.push('pickupPoint');
+      if (!phone?.trim()) missingFields.push('phone');
+      if (!password) missingFields.push('password');
+    
+      // If route info not provided explicitly, try to derive from pickupPoint
+      let derivedRoute = null;
+      if (!routeName || !busNumber) {
+        try {
+          derivedRoute = findBusDetailsByStop(pickupPoint);
+          if (derivedRoute) {
+            routeName = routeName || derivedRoute.routeName;
+            busNumber = busNumber || derivedRoute.busNumber;
+            console.log('ℹ️ Derived route info from pickupPoint:', derivedRoute);
+          } else {
+            console.log('ℹ️ Could not derive route info from pickupPoint:', pickupPoint);
+          }
+        } catch (e) {
+          console.error('Error deriving route info:', e);
+        }
+      }
+
+      // Special validation for route information
+      if (!routeName?.trim()) {
+        missingFields.push('routeName');
+        validationErrors.push('Route name is required');
+      }
+      if (!busNumber?.trim()) {
+        missingFields.push('busNumber');
+        validationErrors.push('Bus number is required');
+      }
+
+      // Validate route information format
+      if (routeName && !routeName.startsWith('Route ')) {
+        validationErrors.push('Invalid route name format. Must start with "Route "');
+      }
+      if (busNumber && !busNumber.startsWith('BUS')) {
+        validationErrors.push('Invalid bus number format. Must start with "BUS"');
+      }
 
     if (missingFields.length > 0) {
-      console.log('❌ Validation Error: Missing fields:', missingFields);
-      return res.status(400).json({ 
-        error: 'Missing required fields', 
-        missingFields 
-      });
+      // If only route fields are missing, supply safe defaults to avoid Mongoose validation failure
+      const nonRouteMissing = missingFields.filter(f => f !== 'routeName' && f !== 'busNumber');
+      if (nonRouteMissing.length > 0) {
+        console.error('❌ Validation Error: Missing required non-route fields:', nonRouteMissing);
+        return res.status(400).json({ 
+          error: 'Missing required fields', 
+          missingFields: nonRouteMissing,
+          validationErrors
+        });
+      }
+
+      // Only route fields missing — use safe defaults but log a warning
+      console.warn('⚠️ Only route fields missing. Applying safe defaults to avoid save error.');
+      if (!routeName || !routeName.trim()) routeName = 'Route Unknown';
+      if (!busNumber || !busNumber.trim()) busNumber = 'BUS000';
+      console.warn('⚠️ Applied defaults:', { routeName, busNumber });
     }
 
     // Additional validation
@@ -63,6 +135,9 @@ router.post('/signup', async (req, res) => {
       return res.status(400).json({ error: 'USN already registered' });
     }
 
+    // At this point routeName and busNumber should be present (derived or provided)
+    console.log('ℹ️ Final route info to be saved:', { routeName, busNumber });
+
     console.log('✨ Creating new user with USN:', normalizedUsn);
     const user = new User({ 
       name, 
@@ -71,14 +146,17 @@ router.post('/signup', async (req, res) => {
       branch, 
       pickupPoint, 
       phone, 
-      password 
+      password,
+      routeName,
+      busNumber
     });
     
     try {
       // Log the full document before saving
       console.log('📝 Attempting to save user document:', {
         ...user.toObject(),
-        password: '[REDACTED]'
+        password: '[REDACTED]',
+        routeInfo: { routeName, busNumber }
       });
 
       await user.save();
@@ -157,11 +235,18 @@ router.post('/login', async (req, res) => {
     if (!usn || !password) return res.status(400).json({ error: 'USN and password are required' });
 
     const normalizedUsn = String(usn).toUpperCase();
+    console.log('🔐 Login attempt for USN:', normalizedUsn);
     const user = await User.findOne({ usn: normalizedUsn });
-    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!user) {
+      console.warn('🔍 Login failed - user not found:', normalizedUsn);
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
 
     const isMatch = await user.comparePassword(password);
-    if (!isMatch) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!isMatch) {
+      console.warn('🔒 Login failed - password mismatch for USN:', normalizedUsn);
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
 
     // Get bus details based on pickup point
     const busDetails = findBusDetailsByStop(user.pickupPoint);

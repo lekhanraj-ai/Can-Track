@@ -31,8 +31,10 @@ const LoginPage = ({ onNavigateToSignin, onLoginSuccess }) => {
 
     setLoading(true);
     try {
-  const response = await authAPI.login({ usn: userId, password });
-  onLoginSuccess(response.user);
+      // Normalize USN to match server expectations (uppercase, trimmed)
+      const normalizedUsn = String(userId).toUpperCase().trim();
+      const response = await authAPI.login({ usn: normalizedUsn, password });
+      onLoginSuccess(response.user);
     } catch (err) {
       // Show friendly message from API client
       setError(err?.message || String(err));
